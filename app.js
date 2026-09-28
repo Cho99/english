@@ -11,7 +11,13 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch
 const today = () => new Date().toLocaleDateString("sv"); // YYYY-MM-DD
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x.toLocaleDateString("sv"); };
 const pid = (lv, i) => `${lv}-${i}`;
-const getP = id => { const [lv, i] = id.split("-"); const p = PHRASES[lv][+i]; return { id, lv, en: p[0], vi: p[1], ex: p[2] }; };
+const WORD_LV = {}; LEVELS.forEach(lv => WORDS[lv].forEach(w => WORD_LV[w] = lv));
+const wid = w => "W:" + w;
+const isWord = id => id.startsWith("W:");
+const getP = id => {
+  if (isWord(id)) { const w = id.slice(2), m = (S.wm || {})[w] || {}; return { id, lv: WORD_LV[w] || "B2", en: w, vi: m.vi || "", ex: m.ex || w, word: true }; }
+  const [lv, i] = id.split("-"); const p = PHRASES[lv][+i]; return { id, lv, en: p[0], vi: p[1], ex: p[2] };
+};
 const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const norm = s => s.toLowerCase().replace(/[^a-z0-9' ]/g, "").replace(/\s+/g, " ").trim();
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -29,7 +35,14 @@ function speak(text, rate = 0.9) {
 }
 window.speechSynthesis && speechSynthesis.getVoices();
 
-// ===== 10 cụm từ mỗi ngày =====
+// ===== 10 cụm từ + N từ mới mỗi ngày =====
+function pickWords(n, assignedSet) {
+  const out = [];
+  for (let li = LEVELS.indexOf(S.wordLevel || S.level); li < LEVELS.length && out.length < n; li++)
+    for (const w of WORDS[LEVELS[li]]) { if (out.length >= n) break; const id = wid(w); if (!S.learned[id] && !assignedSet.has(id)) out.push(id); }
+  return out;
+}
+const assignedSet = () => new Set(Object.values(S.days).flatMap(x => x.ids));
 function todaysPhrases() {
   const d = today();
   if (!S.days[d]) {
@@ -38,10 +51,10 @@ function todaysPhrases() {
       const lv = LEVELS[li];
       PHRASES[lv].forEach((_, i) => {
         const id = pid(lv, i);
-        const assigned = Object.values(S.days).some(x => x.ids.includes(id));
-        if (picked.length < DAILY && !S.learned[id] && !assigned) picked.push(id);
+        if (picked.length < DAILY && !S.learned[id] && !assignedSet().has(id)) picked.push(id);
       });
     }
+    picked.push(...pickWords(S.wordsPerDay ?? 10, assignedSet()));
     S.days[d] = { ids: picked, done: [] };
     save();
   }
@@ -73,7 +86,7 @@ function grade(id, ok) {
 function renderStats() {
   const n = Object.keys(S.learned).length;
   const due = Object.values(S.learned).filter(l => l.due <= today()).length;
-  $("#stats").innerHTML = `Trình độ <b>${S.level}</b> · 🔥 ${S.streak} ngày · 📚 ${n} cụm từ · 🔁 ${due} cần ôn`;
+  $("#stats").innerHTML = `Trình độ <b>${S.level}</b> · 🔥 ${S.streak} ngày · 📚 ${n} từ &amp; cụm từ · 🔁 ${due} cần ôn`;
 }
 
 const views = {};
@@ -87,15 +100,23 @@ function show(tab) {
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => show(b.dataset.tab));
 
 // ----- Hôm nay -----
-views.today = el => {
+views.today = async el => {
   const day = todaysPhrases();
+  const need = day.ids.filter(id => isWord(id) && !(S.wm || {})[id.slice(2)]?.vi);
+  if (need.length) {
+    el.innerHTML = `<div class="card">⏳ Đang tải nghĩa & ví dụ của ${need.length} từ mới từ internet...</div>`;
+    await Promise.all(need.map(id => enrich(id.slice(2))));
+    if (current !== "today") return;
+  }
   const isWeekend = [0, 6].includes(new Date().getDay());
   el.innerHTML = `
     <div class="card">
-      <h2>📅 10 cụm từ hôm nay (${today()})</h2>
+      <h2>📅 Bài học hôm nay (${today()})</h2>
+      <p class="muted">${day.ids.filter(id => !isWord(id)).length} cụm từ + ${day.ids.filter(isWord).length} từ mới (kho ${Object.keys(WORD_LV).length.toLocaleString()} từ thông dụng nhất)</p>
       <div class="row">
         <label>Trình độ:</label>
         <select id="lvl" style="width:auto">${LEVELS.map(l => `<option ${l === S.level ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <label>Từ mới/ngày:</label><select id="wpd" style="width:auto">${[0, 5, 10, 15, 20, 30].map(n => `<option ${n === (S.wordsPerDay ?? 10) ? "selected" : ""}>${n}</option>`).join("")}</select>
         <span class="muted">Đã học ${day.done.length}/${day.ids.length} hôm nay</span>
       </div>
       <div class="bar" style="margin-top:8px"><div style="width:${day.ids.length ? day.done.length / day.ids.length * 100 : 0}%"></div></div>
@@ -106,19 +127,22 @@ views.today = el => {
     ${day.ids.map((id, n) => { const p = getP(id); const done = day.done.includes(id); return `
       <div class="card">
         <div class="row" style="justify-content:space-between">
-          <span class="phrase">${n + 1}. ${esc(p.en)} <span class="muted">(${p.lv})</span></span>
+          <span class="phrase">${n + 1}. ${esc(p.en)} <span class="muted">(${p.word ? "từ" : "cụm từ"} · ${p.lv})</span></span>
           <span class="row"><button data-say="${esc(p.en)}">🔊</button><button data-slow="${esc(p.en)}">🐢</button></span>
         </div>
-        <div>🇻🇳 ${esc(p.vi)}</div>
+        <div>🇻🇳 ${esc(p.vi || "⚠️ chưa lấy được nghĩa (kiểm tra mạng)")}</div>
+        ${p.word && S.wm[p.en].pos ? `<div class="muted">${esc(S.wm[p.en].pos)}</div>` : ""}
         <div class="row"><i>“${esc(p.ex)}”</i> <button data-say="${esc(p.ex)}">🔊</button></div>
         ${infoBox(p.en)}
         <input type="text" placeholder="Tự đặt một câu với cụm từ này..." data-own="${id}" value="${esc((S.own || {})[id] || "")}" style="margin:8px 0">
         <button class="${done ? "" : "primary"}" data-learn="${id}" ${done ? "disabled" : ""}>${done ? "✅ Đã thuộc" : "Đã thuộc"}</button>
       </div>`; }).join("")}
-    <div class="card row"><button class="primary" id="flash">🃏 Luyện Flashcard hôm nay</button></div>`;
+    <div class="card row"><button class="primary" id="flash">🃏 Luyện Flashcard hôm nay</button><button id="more">➕ Học thêm 10 từ mới</button></div>`;
+  el.querySelector("#wpd").onchange = e => { S.wordsPerDay = +e.target.value; save(); };
+  el.querySelector("#more").onclick = () => { day.ids.push(...pickWords(10, assignedSet())); save(); show("today"); };
   el.querySelector("#lvl").onchange = e => {
     if (confirm("Đổi trình độ? Cụm từ mới từ ngày mai (hoặc ngay nếu hôm nay chưa học) sẽ theo trình độ này.")) {
-      S.level = e.target.value;
+      S.level = S.wordLevel = e.target.value;
       const d = S.days[today()];
       if (d && !d.done.length) delete S.days[today()];
       save();
@@ -170,7 +194,8 @@ views.review = el => {
 // Nguồn câu luyện nghe/nói: ví dụ của cụm từ đã học (nếu chưa có thì dùng level hiện tại)
 function practicePool() {
   const ids = Object.keys(S.learned);
-  return ids.length >= 5 ? ids : PHRASES[S.level].map((_, i) => pid(S.level, i));
+  const good = ids.filter(id => !isWord(id) || getP(id).ex.includes(" "));
+  return good.length >= 5 ? good : PHRASES[S.level].map((_, i) => pid(S.level, i));
 }
 
 // ----- Nghe (chép chính tả) -----
@@ -304,9 +329,9 @@ views.quiz = el => {
 };
 
 function runQuiz(el, ids, week) {
-  const pool = Object.keys(S.learned).length >= 4 ? Object.keys(S.learned) : ids;
+  const pool = (Object.keys(S.learned).length >= 4 ? Object.keys(S.learned) : ids).filter(id => getP(id).vi);
   const qs = shuffle(ids).slice(0, 20).map((id, n) => {
-    const p = getP(id), type = n % 3;
+    const p = getP(id); let type = n % 3; if (!p.vi) type = 1;
     const wrong = shuffle(pool.filter(x => x !== id)).slice(0, 3).map(getP);
     if (type === 0) return { id, type, q: `“${p.en}” nghĩa là gì?`, opts: shuffle([p, ...wrong]).map(x => x.vi), ans: p.vi };
     if (type === 1) return { id, type, q: "🔊 Nghe và chọn cụm từ đúng", say: p.en, opts: shuffle([p, ...wrong]).map(x => x.en), ans: p.en };
@@ -352,7 +377,7 @@ function runQuiz(el, ids, week) {
 // ----- Tiến độ -----
 views.progress = el => {
   el.innerHTML = `<div class="card"><h2>📊 Tiến độ</h2>
-    ${LEVELS.map(lv => { const n = PHRASES[lv].filter((_, i) => S.learned[pid(lv, i)]).length; return `<div>${lv}: ${n}/${PHRASES[lv].length}<div class="bar"><div style="width:${n / PHRASES[lv].length * 100}%"></div></div></div>`; }).join("")}
+    ${levelBars()}
     <p>🔥 Chuỗi ngày học: <b>${S.streak}</b> · ✍️ Bài viết: <b>${S.writings.length}</b> · 📖 Bài đọc: <b>${Object.keys(S.readDone).length}</b> · 📝 Bài kiểm tra: <b>${S.quizzes.length}</b></p>
     <p class="muted">Dữ liệu được lưu trên trình duyệt của bạn. Hãy sao lưu để chuyển sang máy khác.</p>
     <div class="row"><button id="exp">⬇️ Sao lưu</button><label class="row"><button id="impb">⬆️ Khôi phục</button><input type="file" id="imp" accept=".json" hidden></label><button id="reset">🗑️ Xóa dữ liệu</button></div></div>
@@ -447,8 +472,13 @@ views.vocab = el => {
     <h3>Số cụm từ học mỗi ngày (14 ngày)</h3>
     <div class="chart">${days.map((d, i) => `<div title="${d}: ${perDay[i]}"><span>${perDay[i] || ""}</span><i style="height:${perDay[i] / max * 100}%"></i><small>${d.slice(8)}</small></div>`).join("")}</div>
     <h3>Theo trình độ</h3>
-    ${LEVELS.map(lv => { const n = ids.filter(id => getP(id).lv === lv).length; return `<div>${lv}: ${n}/${PHRASES[lv].length}<div class="bar"><div style="width:${n / PHRASES[lv].length * 100}%"></div></div></div>`; }).join("")}
+    ${levelBars()}
     </div>
+    <div class="card"><h2>🗂️ Kho từ vựng (${Object.keys(WORD_LV).length.toLocaleString()} từ thông dụng nhất)</h2>
+      <p class="muted">Xếp theo mức độ thông dụng. Bấm vào từ để xem nghĩa, từ loại; bấm ➕ để thêm vào bài học hôm nay.</p>
+      <div class="row" style="flex-wrap:nowrap"><select id="blv" style="width:auto">${LEVELS.map(l => `<option ${l === (S.browseLv || S.level) ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <input type="text" id="bq" placeholder="Lọc từ..."></div>
+      <div id="blist" style="margin-top:8px"></div></div>
     <div class="card"><h2>🔎 Tra từ bất kỳ (online)</h2>
       <div class="row" style="flex-wrap:nowrap"><input type="text" id="q" placeholder="Nhập từ tiếng Anh, vd: decide"><button class="primary" id="qs">Tra</button></div>
       <div id="qr"></div></div>
@@ -462,15 +492,70 @@ views.vocab = el => {
   el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { S.vocabFilter = b.dataset.f; save(); show("vocab"); });
   el.querySelectorAll("[data-say]").forEach(b => b.onclick = () => speak(b.dataset.say));
   bindWordInfo(el);
+  let page = 0;
+  const drawBrowse = () => {
+    const lv = el.querySelector("#blv").value, f = el.querySelector("#bq").value.trim().toLowerCase();
+    const all = f ? Object.keys(WORD_LV).filter(w => w.includes(f)) : WORDS[lv];
+    const per = 60, items = all.slice(page * per, page * per + per);
+    el.querySelector("#blist").innerHTML = `<div class="words">${items.map(w => { const id = wid(w), st = S.learned[id] ? "✅" : assignedSet().has(id) ? "📅" : "";
+      return `<span class="w"><a href="#" data-w="${w}">${w}</a> <small class="muted">${WORD_LV[w]}</small> ${st || `<button data-add="${w}" title="Học hôm nay">➕</button>`}</span>`; }).join("")}</div>
+      <div id="wd"></div>
+      <div class="row" style="margin-top:8px"><button id="pp" ${page ? "" : "disabled"}>◀</button><span class="muted">Trang ${page + 1}/${Math.max(1, Math.ceil(all.length / per))} · ${all.length.toLocaleString()} từ</span><button id="np" ${(page + 1) * per < all.length ? "" : "disabled"}>▶</button></div>`;
+    el.querySelector("#pp").onclick = () => { page--; drawBrowse(); };
+    el.querySelector("#np").onclick = () => { page++; drawBrowse(); };
+    el.querySelectorAll("[data-add]").forEach(b => b.onclick = () => { const d = todaysPhrases(); d.ids.push(wid(b.dataset.add)); save(); drawBrowse(); });
+    el.querySelectorAll("[data-w]").forEach(a => a.onclick = async e => {
+      e.preventDefault(); const w = a.dataset.w, box = el.querySelector("#wd");
+      box.innerHTML = "⏳ Đang tra..."; const m = await enrich(w);
+      box.innerHTML = `<div class="card" style="margin-top:8px"><div class="phrase">${esc(w)}</div><div>🇻🇳 ${esc(m.vi || "")}</div>${m.pos ? `<div class="muted">${esc(m.pos)}</div>` : ""}${await wordInfoHTML(w)}</div>`;
+      box.querySelectorAll("[data-say]").forEach(b => b.onclick = () => speak(b.dataset.say));
+      box.querySelectorAll("[data-audio]").forEach(b => b.onclick = () => new Audio(b.dataset.audio).play());
+      speak(w);
+    });
+  };
+  el.querySelector("#blv").onchange = () => { S.browseLv = el.querySelector("#blv").value; page = 0; save(); drawBrowse(); };
+  el.querySelector("#bq").oninput = () => { page = 0; drawBrowse(); };
+  drawBrowse();
   const q = el.querySelector("#q"), go = async () => {
     const w = q.value.trim().toLowerCase(); if (!w) return;
     const r = el.querySelector("#qr"); r.innerHTML = "⏳ Đang tra...";
-    r.innerHTML = await wordInfoHTML(w);
+    const m = /\s/.test(w) ? {} : await enrich(w);
+    r.innerHTML = (m.vi ? `<div>🇻🇳 <b>${esc(m.vi)}</b></div>${m.pos ? `<div class="muted">${esc(m.pos)}</div>` : ""}` : "") + await wordInfoHTML(w);
     r.querySelectorAll("[data-say]").forEach(b => b.onclick = () => speak(b.dataset.say));
     r.querySelectorAll("[data-audio]").forEach(b => b.onclick = () => new Audio(b.dataset.audio).play());
   };
   el.querySelector("#qs").onclick = go; q.onkeydown = e => e.key === "Enter" && go();
 };
+
+
+function levelBars() {
+  return LEVELS.map(lv => {
+    const np = PHRASES[lv].filter((_, i) => S.learned[pid(lv, i)]).length, nw = WORDS[lv].filter(w => S.learned[wid(w)]).length;
+    return `<div style="margin-bottom:6px">${lv}: cụm từ ${np}/${PHRASES[lv].length} · từ vựng ${nw}/${WORDS[lv].length.toLocaleString()}
+      <div class="bar"><div style="width:${np / PHRASES[lv].length * 100}%"></div></div><div class="bar" style="margin-top:2px"><div style="width:${nw / WORDS[lv].length * 100}%;background:var(--ok)"></div></div></div>`;
+  }).join("");
+}
+
+// Lấy nghĩa tiếng Việt (theo từ loại) + ví dụ từ internet, lưu lại cho từ đã học
+async function enrich(w) {
+  S.wm = S.wm || {};
+  const m = S.wm[w] = S.wm[w] || {};
+  try {
+    const r = await fetch("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&dt=bd&q=" + encodeURIComponent(w));
+    const j = await r.json();
+    m.vi = (j[0] || []).map(x => x[0]).join("");
+    if (j[1]) m.pos = j[1].map(b => `${POS_VI[POS_EN[b[0]]] || b[0]}: ${b[1].slice(0, 4).join(", ")}`).join(" · ");
+  } catch {
+    try { const j = await (await fetch("https://api.mymemory.translated.net/get?langpair=en|vi&q=" + encodeURIComponent(w))).json(); m.vi = j.responseData.translatedText; } catch {}
+  }
+  if (!m.ex || m.ex === w) {
+    const d = await lookup(w);
+    const ex = d && d.flatMap(e => e.meanings).flatMap(x => x.definitions).map(x => x.example).find(Boolean);
+    if (ex) m.ex = ex;
+  }
+  save();
+  return m;
+}
 
 renderStats();
 show("today");

@@ -29,3 +29,4 @@ h2{margin-top:0}
 .chart i{display:block;width:100%;background:var(--accent);border-radius:4px 4px 0 0;min-height:2px}.chart small{color:var(--muted)}
 table.fam{border-collapse:collapse;margin:6px 0}table.fam td{border:1px solid var(--border);padding:4px 10px}
 summary{cursor:pointer;color:var(--accent)}
+.words{display:flex;flex-wrap:wrap;gap:6px}.w{background:var(--bg);border-radius:8px;padding:4px 8px}.w button{padding:0 6px}
