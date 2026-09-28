@@ -111,6 +111,7 @@ views.today = el => {
         </div>
         <div>🇻🇳 ${esc(p.vi)}</div>
         <div class="row"><i>“${esc(p.ex)}”</i> <button data-say="${esc(p.ex)}">🔊</button></div>
+        ${infoBox(p.en)}
         <input type="text" placeholder="Tự đặt một câu với cụm từ này..." data-own="${id}" value="${esc((S.own || {})[id] || "")}" style="margin:8px 0">
         <button class="${done ? "" : "primary"}" data-learn="${id}" ${done ? "disabled" : ""}>${done ? "✅ Đã thuộc" : "Đã thuộc"}</button>
       </div>`; }).join("")}
@@ -128,6 +129,7 @@ views.today = el => {
   el.querySelectorAll("[data-slow]").forEach(b => b.onclick = () => speak(b.dataset.slow, 0.6));
   el.querySelectorAll("[data-learn]").forEach(b => b.onclick = () => { markLearned(b.dataset.learn); show("today"); });
   el.querySelectorAll("[data-own]").forEach(i => i.onchange = () => { S.own = S.own || {}; S.own[i.dataset.own] = i.value; save(); });
+  bindWordInfo(el);
   el.querySelector("#flash").onclick = () => flashcards(el, day.ids);
   const gq = el.querySelector("#goquiz"); if (gq) gq.onclick = e => { e.preventDefault(); show("quiz"); };
 };
@@ -138,7 +140,7 @@ function flashcards(el, ids, onGrade) {
     if (i >= ids.length) { el.innerHTML = `<div class="card"><h2>🎉 Xong!</h2><p>Bạn đã xem hết ${ids.length} thẻ.</p><button class="primary" id="back">Quay lại</button></div>`; el.querySelector("#back").onclick = () => show(current); return; }
     const p = getP(ids[i]);
     el.innerHTML = `<div class="card"><div class="muted">Thẻ ${i + 1}/${ids.length} · bấm vào thẻ để lật</div>
-      <div class="card flash" id="fc">${flipped ? `<div class="phrase">${esc(p.en)}</div><i>${esc(p.ex)}</i>` : `<div class="phrase">${esc(p.vi)}</div><div class="muted">Cụm từ tiếng Anh là gì?</div>`}</div>
+      <div class="card flash" id="fc">${flipped ? `<div class="phrase">${esc(p.en)}</div><i>${esc(p.ex)}</i>${famLine(p.en)}` : `<div class="phrase">${esc(p.vi)}</div><div class="muted">Cụm từ tiếng Anh là gì?</div>`}</div>
       <div class="row">${flipped ? `<button id="no">❌ Chưa nhớ</button><button class="primary" id="yes">✅ Nhớ rồi</button><button id="say">🔊</button>` : `<button class="primary" id="flip">Lật thẻ</button>`}</div></div>`;
     const flip = () => { flipped = true; draw(); speak(p.en); };
     el.querySelector("#fc").onclick = flip;
@@ -151,6 +153,8 @@ function flashcards(el, ids, onGrade) {
   };
   draw();
 }
+
+const famLine = en => contentWords(en).map(w => { const f = familyOf(w); return f ? `<div class="muted">${esc(w)}: ${Object.entries(f).map(([k, v]) => `${k}. ${esc(v)}`).join(" · ")}</div>` : ""; }).join("");
 
 // ----- Ôn tập (lặp lại ngắt quãng) -----
 views.review = el => {
@@ -357,6 +361,115 @@ views.progress = el => {
   el.querySelector("#impb").onclick = () => el.querySelector("#imp").click();
   el.querySelector("#imp").onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => { try { S = JSON.parse(t); save(); show("progress"); alert("Đã khôi phục!"); } catch { alert("File không hợp lệ"); } }); };
   el.querySelector("#reset").onclick = () => { if (confirm("Xóa toàn bộ tiến độ?")) { localStorage.removeItem(KEY); location.reload(); } };
+};
+
+
+// ===== Tra từ online + họ từ (danh/động/tính/trạng từ) =====
+const STOP = new Set("a an the i you me my your he she it we they is are am be been was were to of in on at for with by and or but so what how where why do does don't can could would will i'm i'd it's let's that there this these up out off down about as from into if no not all any some one very much many our their its his her us them s your's something someone".split(" "));
+const POS_VI = { n: "Danh từ (n)", v: "Động từ (v)", adj: "Tính từ (adj)", adv: "Trạng từ (adv)", prep: "Giới từ (prep)" };
+const POS_EN = { noun: "n", verb: "v", adjective: "adj", adverb: "adv", preposition: "prep" };
+const dictCache = {}; // chỉ cache trong phiên — luôn lấy dữ liệu mới từ mạng khi mở app
+
+function contentWords(phrase) {
+  return [...new Set(phrase.toLowerCase().replace(/[^a-z' ]/g, " ").split(/\s+/).filter(w => w && !STOP.has(w) && w.length > 2))];
+}
+function familyOf(w) {
+  const cands = [w, w.replace(/s$/, ""), w.replace(/es$/, ""), w.replace(/ed$/, ""), w.replace(/d$/, ""), w.replace(/ing$/, ""), w.replace(/ing$/, "e"), w.replace(/ied$/, "y"), w.replace(/ies$/, "y")];
+  for (const c of cands) if (FAMILY[c]) return FAMILY[c];
+  return null;
+}
+async function lookup(w) {
+  if (!dictCache[w]) dictCache[w] = fetch("https://api.dictionaryapi.dev/api/v2/entries/en/" + encodeURIComponent(w), { cache: "no-store" })
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+  return dictCache[w];
+}
+async function wordInfoHTML(phrase) {
+  const words = /\s/.test(phrase.trim()) ? contentWords(phrase) : [phrase.trim().toLowerCase()];
+  if (!words.length) return "<p class='muted'>Cụm từ này chủ yếu gồm từ chức năng (giới từ, đại từ...).</p>";
+  const blocks = await Promise.all(words.map(async w => {
+    const data = await lookup(w);
+    const fam = Object.assign({}, familyOf(w) || {});
+    let ipa = "", audio = "", defs = "";
+    if (data && data[0]) {
+      const e = data[0];
+      ipa = e.phonetic || (e.phonetics.find(p => p.text) || {}).text || "";
+      audio = (e.phonetics.find(p => p.audio) || {}).audio || "";
+      const meanings = data.flatMap(x => x.meanings);
+      meanings.forEach(m => { const k = POS_EN[m.partOfSpeech]; if (k && !fam[k]) fam[k] = e.word; });
+      defs = meanings.slice(0, 4).map(m => `<li><b>${esc(m.partOfSpeech)}</b>: ${esc(m.definitions[0].definition)}${m.definitions[0].example ? ` <i class="muted">— ${esc(m.definitions[0].example)}</i>` : ""}</li>`).join("");
+    }
+    const famRows = ["n", "v", "adj", "adv", "prep"].filter(k => fam[k]).map(k => `<tr><td>${POS_VI[k]}</td><td><b>${esc(fam[k])}</b></td></tr>`).join("");
+    return `<div style="margin:8px 0;padding:8px;border-left:3px solid var(--accent)">
+      <div class="row"><b style="font-size:1.05rem">${esc(w)}</b> <span class="muted">${esc(ipa)}</span>
+      ${audio ? `<button data-audio="${esc(audio)}">🔊 giọng thật</button>` : `<button data-say="${esc(w)}">🔊</button>`}</div>
+      ${famRows ? `<table class="fam">${famRows}</table>` : "<p class='muted'>Không có dữ liệu họ từ.</p>"}
+      ${defs ? `<ul>${defs}</ul>` : `<p class="muted">${data === null ? "⚠️ Không lấy được dữ liệu online (kiểm tra kết nối mạng)." : ""}</p>`}
+    </div>`;
+  }));
+  return blocks.join("") + `<p class="muted">Nguồn online: dictionaryapi.dev</p>`;
+}
+function bindWordInfo(root) {
+  root.querySelectorAll("details[data-info]").forEach(d => d.addEventListener("toggle", async () => {
+    if (!d.open || d.dataset.loaded) return;
+    d.dataset.loaded = 1;
+    const box = d.querySelector(".info");
+    box.innerHTML = "⏳ Đang tải từ điển online...";
+    box.innerHTML = await wordInfoHTML(d.dataset.info);
+    box.querySelectorAll("[data-say]").forEach(b => b.onclick = () => speak(b.dataset.say));
+    box.querySelectorAll("[data-audio]").forEach(b => b.onclick = () => new Audio(b.dataset.audio).play());
+  }));
+}
+const infoBox = en => `<details data-info="${esc(en)}"><summary>📖 Từ loại (n/v/adj/adv), phiên âm & nghĩa — tra online</summary><div class="info"></div></details>`;
+
+// ----- Thống kê từ vựng -----
+views.vocab = el => {
+  const ids = Object.keys(S.learned), L = S.learned, t = today(), ws = weekStart();
+  const tot = ids.reduce((a, id) => [a[0] + L[id].right, a[1] + L[id].wrong], [0, 0]);
+  const acc = tot[0] + tot[1] ? Math.round(tot[0] / (tot[0] + tot[1]) * 100) : 0;
+  const mastered = ids.filter(id => L[id].box >= 3).length;
+  const weak = ids.filter(id => L[id].wrong > L[id].right || (L[id].wrong && L[id].box === 0));
+  // 14 ngày gần nhất
+  const days = [...Array(14)].map((_, i) => addDays(t, i - 13));
+  const perDay = days.map(d => ids.filter(id => L[id].date === d).length);
+  const max = Math.max(1, ...perDay);
+  const filter = S.vocabFilter || "all";
+  const list = ids.filter(id => filter === "all" || (filter === "weak" ? weak.includes(id) : filter === "week" ? L[id].date >= ws : getP(id).lv === filter))
+    .sort((a, b) => L[b].date.localeCompare(L[a].date));
+  el.innerHTML = `<div class="card"><h2>📚 Thống kê từ vựng</h2>
+    <div class="grid">
+      <div class="stat"><b>${ids.length}</b><span>Tổng đã học</span></div>
+      <div class="stat"><b>${ids.filter(id => L[id].date === t).length}</b><span>Hôm nay</span></div>
+      <div class="stat"><b>${ids.filter(id => L[id].date >= ws).length}</b><span>Tuần này</span></div>
+      <div class="stat"><b>${mastered}</b><span>Đã thuộc chắc</span></div>
+      <div class="stat"><b>${weak.length}</b><span>Hay quên</span></div>
+      <div class="stat"><b>${acc}%</b><span>Tỉ lệ nhớ đúng</span></div>
+    </div>
+    <h3>Số cụm từ học mỗi ngày (14 ngày)</h3>
+    <div class="chart">${days.map((d, i) => `<div title="${d}: ${perDay[i]}"><span>${perDay[i] || ""}</span><i style="height:${perDay[i] / max * 100}%"></i><small>${d.slice(8)}</small></div>`).join("")}</div>
+    <h3>Theo trình độ</h3>
+    ${LEVELS.map(lv => { const n = ids.filter(id => getP(id).lv === lv).length; return `<div>${lv}: ${n}/${PHRASES[lv].length}<div class="bar"><div style="width:${n / PHRASES[lv].length * 100}%"></div></div></div>`; }).join("")}
+    </div>
+    <div class="card"><h2>🔎 Tra từ bất kỳ (online)</h2>
+      <div class="row" style="flex-wrap:nowrap"><input type="text" id="q" placeholder="Nhập từ tiếng Anh, vd: decide"><button class="primary" id="qs">Tra</button></div>
+      <div id="qr"></div></div>
+    <div class="card"><h2>Danh sách (${list.length})</h2>
+      <div class="row">${[["all", "Tất cả"], ["week", "Tuần này"], ["weak", "Hay quên"], ...LEVELS.map(l => [l, l])].map(([k, v]) => `<button data-f="${k}" class="${filter === k ? "primary" : ""}">${v}</button>`).join("")}</div>
+      ${list.map(id => { const p = getP(id), l = L[id]; return `<div class="card" style="margin-top:8px">
+        <div class="row" style="justify-content:space-between"><span class="phrase">${esc(p.en)}</span><button data-say="${esc(p.en)}">🔊</button></div>
+        <div>🇻🇳 ${esc(p.vi)} <span class="muted">· ${p.lv} · học ${l.date} · ✅${l.right} ❌${l.wrong} · hộp ${l.box}/6 · ôn ${l.due}</span></div>
+        ${infoBox(p.en)}</div>`; }).join("") || "<p class='muted'>Chưa có.</p>"}
+    </div>`;
+  el.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { S.vocabFilter = b.dataset.f; save(); show("vocab"); });
+  el.querySelectorAll("[data-say]").forEach(b => b.onclick = () => speak(b.dataset.say));
+  bindWordInfo(el);
+  const q = el.querySelector("#q"), go = async () => {
+    const w = q.value.trim().toLowerCase(); if (!w) return;
+    const r = el.querySelector("#qr"); r.innerHTML = "⏳ Đang tra...";
+    r.innerHTML = await wordInfoHTML(w);
+    r.querySelectorAll("[data-say]").forEach(b => b.onclick = () => speak(b.dataset.say));
+    r.querySelectorAll("[data-audio]").forEach(b => b.onclick = () => new Audio(b.dataset.audio).play());
+  };
+  el.querySelector("#qs").onclick = go; q.onkeydown = e => e.key === "Enter" && go();
 };
 
 renderStats();
