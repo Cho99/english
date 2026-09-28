@@ -86,14 +86,31 @@ function grade(id, ok) {
 function renderStats() {
   const n = Object.keys(S.learned).length;
   const due = Object.values(S.learned).filter(l => l.due <= today()).length;
-  $("#stats").innerHTML = `Trình độ <b>${S.level}</b> · 🔥 ${S.streak} ngày · 📚 ${n} từ &amp; cụm từ · 🔁 ${due} cần ôn`;
+  $("#stats").innerHTML = `<span class="chip"><span class="badge ${S.level}">${S.level}</span> Trình độ</span>
+    <span class="chip">🔥 ${S.streak} ngày</span><span class="chip">📚 ${n.toLocaleString()} đã học</span>`;
+  $("#dueBadge").textContent = due || "";
+  const day = S.days[today()], done = day ? day.done.length : 0, tot = day ? day.ids.length : 0;
+  $("#sideCard").innerHTML = `Mục tiêu hôm nay<b>${done}/${tot}</b><div class="bar"><div style="width:${tot ? done / tot * 100 : 0}%"></div></div>
+    <div style="margin-top:8px;opacity:.9">🔁 ${due} mục cần ôn</div>`;
 }
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 1800);
+}
+const TITLES = {
+  today: ["Hôm nay", "Bài học mỗi ngày của bạn"], review: ["Ôn tập", "Lặp lại ngắt quãng giúp nhớ lâu"], vocab: ["Từ vựng", "Thống kê, kho từ & tra từ online"],
+  listen: ["Luyện nghe", "Nghe & chép chính tả"], speak: ["Luyện nói", "Phát âm & nói tự do"], read: ["Luyện đọc", "Bài đọc theo trình độ"],
+  write: ["Luyện viết", "Viết mỗi ngày, nhận xét tự động"], grammar: ["Ngữ pháp", "Điểm ngữ pháp trọng tâm A1–B2"],
+  quiz: ["Kiểm tra tuần", "Bài kiểm tra cuối tuần"], progress: ["Tiến độ", "Hành trình học của bạn"]
+};
 
 const views = {};
 let current = "today";
 function show(tab) {
   current = tab;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  $("#pageTitle").textContent = TITLES[tab][0]; $("#pageSub").textContent = TITLES[tab][1];
+  window.scrollTo({ top: 0 });
   speechSynthesis && speechSynthesis.cancel();
   views[tab]($("#view"));
 }
@@ -104,42 +121,58 @@ views.today = async el => {
   const day = todaysPhrases();
   const need = day.ids.filter(id => isWord(id) && !(S.wm || {})[id.slice(2)]?.vi);
   if (need.length) {
-    el.innerHTML = `<div class="card">⏳ Đang tải nghĩa & ví dụ của ${need.length} từ mới từ internet...</div>`;
+    el.innerHTML = `<div class="card">⏳ Đang tải nghĩa & ví dụ của ${need.length} từ mới từ internet...<div class="bar" style="margin-top:10px"><div style="width:60%"></div></div></div>`;
     await Promise.all(need.map(id => enrich(id.slice(2))));
     if (current !== "today") return;
   }
   const isWeekend = [0, 6].includes(new Date().getDay());
+  const pct = day.ids.length ? Math.round(day.done.length / day.ids.length * 100) : 0;
+  const due = Object.values(S.learned).filter(l => l.due <= today()).length;
+  const h = new Date().getHours(), hello = h < 11 ? "Chào buổi sáng" : h < 18 ? "Chào buổi chiều" : "Chào buổi tối";
+  const tile = (tab, ic, t, sub) => `<button class="tile" data-go="${tab}"><span class="t-ic">${ic}</span><b>${t}</b><span>${sub}</span></button>`;
   el.innerHTML = `
-    <div class="card">
-      <h2>📅 Bài học hôm nay (${today()})</h2>
-      <p class="muted">${day.ids.filter(id => !isWord(id)).length} cụm từ + ${day.ids.filter(isWord).length} từ mới (kho ${Object.keys(WORD_LV).length.toLocaleString()} từ thông dụng nhất)</p>
-      <div class="row">
-        <label>Trình độ:</label>
-        <select id="lvl" style="width:auto">${LEVELS.map(l => `<option ${l === S.level ? "selected" : ""}>${l}</option>`).join("")}</select>
-        <label>Từ mới/ngày:</label><select id="wpd" style="width:auto">${[0, 5, 10, 15, 20, 30].map(n => `<option ${n === (S.wordsPerDay ?? 10) ? "selected" : ""}>${n}</option>`).join("")}</select>
-        <span class="muted">Đã học ${day.done.length}/${day.ids.length} hôm nay</span>
-      </div>
-      <div class="bar" style="margin-top:8px"><div style="width:${day.ids.length ? day.done.length / day.ids.length * 100 : 0}%"></div></div>
-      ${isWeekend ? `<p>🎯 Hôm nay là cuối tuần — hãy làm <a href="#" id="goquiz">bài kiểm tra tuần</a>!</p>` : ""}
-      <p class="muted">Cách học: nghe 🔊 → đọc to theo → đọc ví dụ → tự đặt 1 câu → bấm "Đã thuộc". Sau đó luyện Flashcard.</p>
-    </div>
-    ${day.ids.length ? "" : `<div class="card">🎉 Bạn đã học hết toàn bộ cụm từ! Hãy tiếp tục ôn tập.</div>`}
-    ${day.ids.map((id, n) => { const p = getP(id); const done = day.done.includes(id); return `
-      <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <span class="phrase">${n + 1}. ${esc(p.en)} <span class="muted">(${p.word ? "từ" : "cụm từ"} · ${p.lv})</span></span>
-          <span class="row"><button data-say="${esc(p.en)}">🔊</button><button data-slow="${esc(p.en)}">🐢</button></span>
+    <div class="card hero">
+      <div class="ring" style="--p:${pct}"><div><b>${pct}%</b><small>${day.done.length}/${day.ids.length}</small></div></div>
+      <div class="hero-body">
+        <h2>${hello}! 👋</h2>
+        <p>Hôm nay: <b>${day.ids.filter(id => !isWord(id)).length} cụm từ</b> + <b>${day.ids.filter(isWord).length} từ mới</b> · 🔥 chuỗi ${S.streak} ngày</p>
+        ${isWeekend ? `<p>🏆 Cuối tuần rồi — <a href="#" id="goquiz" style="color:#fff;font-weight:700">làm bài kiểm tra tuần</a>!</p>` : ""}
+        <div class="row" style="margin-top:10px">
+          <label>Trình độ</label><select id="lvl">${LEVELS.map(l => `<option ${l === S.level ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <label>Từ mới/ngày</label><select id="wpd">${[0, 5, 10, 15, 20, 30].map(n => `<option ${n === (S.wordsPerDay ?? 10) ? "selected" : ""}>${n}</option>`).join("")}</select>
         </div>
-        <div>🇻🇳 ${esc(p.vi || "⚠️ chưa lấy được nghĩa (kiểm tra mạng)")}</div>
-        ${p.word && S.wm[p.en].pos ? `<div class="muted">${esc(S.wm[p.en].pos)}</div>` : ""}
-        <div class="row"><i>“${esc(p.ex)}”</i> <button data-say="${esc(p.ex)}">🔊</button></div>
+      </div>
+    </div>
+    <div class="tiles">
+      ${tile("review", "🔁", "Ôn tập", due ? `${due} mục đến hạn` : "Không có mục đến hạn")}
+      ${tile("listen", "🎧", "Nghe", "Chép chính tả")}
+      ${tile("speak", "🎤", "Nói", "Chấm phát âm")}
+      ${tile("read", "📖", "Đọc", "Bài đọc + câu hỏi")}
+      ${tile("write", "✍️", "Viết", "Đề hôm nay")}
+    </div>
+    <div class="section-title"><h2>📅 Bài học hôm nay</h2>
+      <div class="row"><button class="primary" id="flash">🃏 Flashcard</button><button id="more">➕ Thêm 10 từ</button></div></div>
+    <p class="muted" style="margin-top:-4px">Cách học: nghe 🔊 → đọc to theo → đọc ví dụ → tự đặt 1 câu → bấm <b>Đã thuộc</b>.</p>
+    ${day.ids.length ? "" : `<div class="card">🎉 Bạn đã học hết! Hãy tiếp tục ôn tập.</div>`}
+    <div class="lesson-grid">
+    ${day.ids.map((id, n) => { const p = getP(id); const done = day.done.includes(id); return `
+      <div class="card lesson ${done ? "done" : ""}" id="c-${esc(id)}">
+        <div class="row between">
+          <span class="row"><span class="num">#${n + 1}</span><span class="badge ${p.lv}">${p.lv}</span><span class="tag">${p.word ? "Từ vựng" : "Cụm từ"}</span></span>
+          <span class="row"><button class="icon" data-say="${esc(p.en)}" title="Nghe">🔊</button><button class="icon" data-slow="${esc(p.en)}" title="Nghe chậm">🐢</button></span>
+        </div>
+        <div class="phrase">${esc(p.en)}</div>
+        <div class="vi">🇻🇳 ${esc(p.vi || "⚠️ chưa lấy được nghĩa (kiểm tra mạng)")}</div>
+        ${p.word && S.wm[p.en].pos ? `<div class="pos">${esc(S.wm[p.en].pos)}</div>` : ""}
+        ${p.ex !== p.en ? `<div class="ex"><span>“${esc(p.ex)}”</span><button class="icon" data-say="${esc(p.ex)}">🔊</button></div>` : ""}
         ${infoBox(p.en)}
-        <input type="text" placeholder="Tự đặt một câu với cụm từ này..." data-own="${id}" value="${esc((S.own || {})[id] || "")}" style="margin:8px 0">
-        <button class="${done ? "" : "primary"}" data-learn="${id}" ${done ? "disabled" : ""}>${done ? "✅ Đã thuộc" : "Đã thuộc"}</button>
+        <input type="text" placeholder="✏️ Tự đặt một câu..." data-own="${id}" value="${esc((S.own || {})[id] || "")}">
+        <div class="actions"><button class="${done ? "success" : "primary"}" style="width:100%" data-learn="${id}" ${done ? "disabled" : ""}>${done ? "✅ Đã thuộc" : "Đánh dấu đã thuộc"}</button></div>
       </div>`; }).join("")}
-    <div class="card row"><button class="primary" id="flash">🃏 Luyện Flashcard hôm nay</button><button id="more">➕ Học thêm 10 từ mới</button></div>`;
+    </div>`;
+  el.querySelectorAll("[data-go]").forEach(b => b.onclick = () => show(b.dataset.go));
   el.querySelector("#wpd").onchange = e => { S.wordsPerDay = +e.target.value; save(); };
-  el.querySelector("#more").onclick = () => { day.ids.push(...pickWords(10, assignedSet())); save(); show("today"); };
+  el.querySelector("#more").onclick = () => { day.ids.push(...pickWords(10, assignedSet())); save(); toast("➕ Đã thêm 10 từ mới"); show("today"); };
   el.querySelector("#lvl").onchange = e => {
     if (confirm("Đổi trình độ? Cụm từ mới từ ngày mai (hoặc ngay nếu hôm nay chưa học) sẽ theo trình độ này.")) {
       S.level = S.wordLevel = e.target.value;
@@ -151,7 +184,16 @@ views.today = async el => {
   };
   el.querySelectorAll("[data-say]").forEach(b => b.onclick = () => speak(b.dataset.say));
   el.querySelectorAll("[data-slow]").forEach(b => b.onclick = () => speak(b.dataset.slow, 0.6));
-  el.querySelectorAll("[data-learn]").forEach(b => b.onclick = () => { markLearned(b.dataset.learn); show("today"); });
+  el.querySelectorAll("[data-learn]").forEach(b => b.onclick = () => {
+    markLearned(b.dataset.learn);
+    b.disabled = true; b.className = "success"; b.textContent = "✅ Đã thuộc";
+    b.closest(".lesson").classList.add("done");
+    const p2 = Math.round(day.done.length / day.ids.length * 100);
+    el.querySelector(".ring").style.setProperty("--p", p2);
+    el.querySelector(".ring b").textContent = p2 + "%";
+    el.querySelector(".ring small").textContent = `${day.done.length}/${day.ids.length}`;
+    toast(day.done.length === day.ids.length ? "🎉 Hoàn thành bài học hôm nay!" : `👍 Đã thuộc ${day.done.length}/${day.ids.length}`);
+  });
   el.querySelectorAll("[data-own]").forEach(i => i.onchange = () => { S.own = S.own || {}; S.own[i.dataset.own] = i.value; save(); });
   bindWordInfo(el);
   el.querySelector("#flash").onclick = () => flashcards(el, day.ids);
@@ -163,9 +205,13 @@ function flashcards(el, ids, onGrade) {
   const draw = () => {
     if (i >= ids.length) { el.innerHTML = `<div class="card"><h2>🎉 Xong!</h2><p>Bạn đã xem hết ${ids.length} thẻ.</p><button class="primary" id="back">Quay lại</button></div>`; el.querySelector("#back").onclick = () => show(current); return; }
     const p = getP(ids[i]);
-    el.innerHTML = `<div class="card"><div class="muted">Thẻ ${i + 1}/${ids.length} · bấm vào thẻ để lật</div>
-      <div class="card flash" id="fc">${flipped ? `<div class="phrase">${esc(p.en)}</div><i>${esc(p.ex)}</i>${famLine(p.en)}` : `<div class="phrase">${esc(p.vi)}</div><div class="muted">Cụm từ tiếng Anh là gì?</div>`}</div>
-      <div class="row">${flipped ? `<button id="no">❌ Chưa nhớ</button><button class="primary" id="yes">✅ Nhớ rồi</button><button id="say">🔊</button>` : `<button class="primary" id="flip">Lật thẻ</button>`}</div></div>`;
+    el.innerHTML = `<div class="card" style="max-width:640px;margin:0 auto">
+      <div class="row between"><span class="muted">Thẻ ${i + 1}/${ids.length}</span><span class="badge ${p.lv}">${p.lv}</span></div>
+      <div class="bar" style="margin-top:8px"><div style="width:${i / ids.length * 100}%"></div></div>
+      <div class="flash-wrap"><div class="card flash" id="fc" title="Bấm để lật">${flipped ? `<div class="phrase">${esc(p.en)}</div><i>${esc(p.ex)}</i>${famLine(p.en)}` : `<div class="phrase">${esc(p.vi || p.en)}</div><div class="muted">👆 Bấm để lật — tiếng Anh là gì?</div>`}</div></div>
+      <div class="row" style="justify-content:center">${flipped ? `<button id="no" style="flex:1">❌ Chưa nhớ</button><button class="icon" id="say">🔊</button><button class="primary" id="yes" style="flex:1">✅ Nhớ rồi</button>` : `<button class="primary" id="flip" style="flex:1">Lật thẻ</button>`}</div>
+      <div style="text-align:center;margin-top:12px"><a href="#" id="exit" class="muted">Thoát</a></div></div>`;
+    el.querySelector("#exit").onclick = e => { e.preventDefault(); show(current); };
     const flip = () => { flipped = true; draw(); speak(p.en); };
     el.querySelector("#fc").onclick = flip;
     if (!flipped) el.querySelector("#flip").onclick = flip;
@@ -444,7 +490,7 @@ function bindWordInfo(root) {
     box.querySelectorAll("[data-audio]").forEach(b => b.onclick = () => new Audio(b.dataset.audio).play());
   }));
 }
-const infoBox = en => `<details data-info="${esc(en)}"><summary>📖 Từ loại (n/v/adj/adv), phiên âm & nghĩa — tra online</summary><div class="info"></div></details>`;
+const infoBox = en => `<details data-info="${esc(en)}"><summary>📖 Từ loại · phiên âm · nghĩa (online)</summary><div class="info"></div></details>`;
 
 // ----- Thống kê từ vựng -----
 views.vocab = el => {

@@ -2,28 +2,45 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>English A1→B2</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<title>LinguaDaily · English A1→B2</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%234f46e5'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'>E</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1>🇬🇧 English A1→B2</h1>
-  <div id="stats"></div>
-</header>
-<nav id="tabs">
-  <button data-tab="today" class="active">📅 Hôm nay</button>
-  <button data-tab="vocab">📚 Từ vựng</button>
-  <button data-tab="review">🔁 Ôn tập</button>
-  <button data-tab="listen">🎧 Nghe</button>
-  <button data-tab="speak">🎤 Nói</button>
-  <button data-tab="read">📖 Đọc</button>
-  <button data-tab="write">✍️ Viết</button>
-  <button data-tab="grammar">📐 Ngữ pháp</button>
-  <button data-tab="quiz">📝 Kiểm tra tuần</button>
-  <button data-tab="progress">📊 Tiến độ</button>
-</nav>
-<main id="view"></main>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">E</span><div><b>LinguaDaily</b><small>English A1 → B2</small></div></div>
+    <nav id="tabs">
+      <div class="nav-label">Học tập</div>
+      <button data-tab="today" class="active"><span class="ic">🏠</span><span>Hôm nay</span></button>
+      <button data-tab="review"><span class="ic">🔁</span><span>Ôn tập</span><em id="dueBadge"></em></button>
+      <button data-tab="vocab"><span class="ic">📚</span><span>Từ vựng</span></button>
+      <div class="nav-label">Kỹ năng</div>
+      <button data-tab="listen"><span class="ic">🎧</span><span>Nghe</span></button>
+      <button data-tab="speak"><span class="ic">🎤</span><span>Nói</span></button>
+      <button data-tab="read"><span class="ic">📖</span><span>Đọc</span></button>
+      <button data-tab="write"><span class="ic">✍️</span><span>Viết</span></button>
+      <button data-tab="grammar"><span class="ic">📐</span><span>Ngữ pháp</span></button>
+      <div class="nav-label">Đánh giá</div>
+      <button data-tab="quiz"><span class="ic">🏆</span><span>Kiểm tra tuần</span></button>
+      <button data-tab="progress"><span class="ic">📊</span><span>Tiến độ</span></button>
+    </nav>
+    <div class="side-card" id="sideCard"></div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div><h1 id="pageTitle">Hôm nay</h1><div class="sub" id="pageSub"></div></div>
+      <div id="stats" class="chips"></div>
+    </header>
+    <main id="view"></main>
+  </div>
+</div>
+<div id="toast"></div>
 <script src="data.js"></script>
 <script src="families.js"></script>
 <script src="words.js"></script>
